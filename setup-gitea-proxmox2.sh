@@ -199,7 +199,7 @@ volumes:
   act_runner_1_data:
   act_runner_2_data:
   act_runner_3_data:
-COMPOSE
+COMPOSentryDOCKERFILE
 "
 
 # ─── 7. SUBIR APENAS O GITEA PRIMEIRO ────────────────────────────────────────
