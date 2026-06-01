@@ -1,6 +1,6 @@
 #!/bin/bash
 
-echo "[mock] gpg $@" >&2
+echo "[mock] gpg" "$@" >&2
 out=""
 dearmor=0
 while [[ $# -gt 0 ]]; do
