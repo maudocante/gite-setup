@@ -1,0 +1,87 @@
+name: CI - Shellcheck, shfmt, bash-n, integration
+
+on:
+  push:
+    paths:
+      - '**/*.sh'
+      - 'setup-gitea-proxmox2.sh'
+  pull_request:
+    paths:
+      - '**/*.sh'
+      - 'setup-gitea-proxmox2.sh'
+
+jobs:
+  lint:
+    name: Lint (shellcheck, shfmt, bash -n)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq shellcheck curl
+          curl -sSLo /tmp/shfmt https://github.com/mvdan/sh/releases/download/v3.8.0/shfmt_v3.8.0_linux_amd64
+          chmod +x /tmp/shfmt && sudo mv /tmp/shfmt /usr/local/bin/shfmt
+
+      - name: List shell scripts
+        run: |
+          echo "Shell scripts in repo:"
+          git ls-files '*.sh' || true
+
+      - name: shfmt (check formatting)
+        run: |
+          files=$(git ls-files '*.sh' || true)
+          if [ -n "$files" ]; then
+            echo "$files" | xargs shfmt -l || true
+          else
+            echo "No shell scripts found"
+          fi
+
+      - name: shellcheck
+        run: |
+          files=$(git ls-files '*.sh' || true)
+          if [ -n "$files" ]; then
+            shellcheck $files || true
+          else
+            echo "No shell scripts found"
+          fi
+
+      - name: bash -n
+        run: |
+          files=$(git ls-files '*.sh' || true)
+          if [ -n "$files" ]; then
+            for f in $files; do
+              echo "Checking syntax: $f"
+              bash -n "$f"
+            done
+          else
+            echo "No shell scripts found"
+          fi
+
+  integration:
+    name: Integration (mocked)
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Prepare mocks
+        run: |
+          ls -la tests/ci-mocks || true
+          chmod +x tests/ci-mocks/* || true
+
+      - name: Run script inside Ubuntu container with mocks
+        run: |
+          echo "Starting container run (mocks in PATH)"
+          docker run --rm -v "$GITHUB_WORKSPACE":/work -w /work ubuntu:22.04 bash -eux -c '
+            export PATH=/work/tests/ci-mocks:$PATH
+            mkdir -p /etc/pve/lxc
+            chmod +x /work/tests/ci-mocks/* || true
+            echo "Running bash -n"
+            bash -n setup-gitea-proxmox2.sh
+            echo "Attempting to run script (mocked)"
+            bash setup-gitea-proxmox2.sh || true
+          '

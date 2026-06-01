@@ -1,0 +1,35 @@
+name: CI - Bash syntax check
+
+on:
+  push:
+    paths:
+      - '**/*.sh'
+  pull_request:
+    paths:
+      - '**/*.sh'
+
+jobs:
+  bash-syntax:
+    name: Bash syntax check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: List shell scripts
+        run: |
+          echo "Shell scripts in repo:"
+          git ls-files '*.sh' || true
+
+      - name: Bash syntax check (bash -n)
+        run: |
+          set -euo pipefail
+          files=$(git ls-files '*.sh' || true)
+          if [ -z "${files}" ]; then
+            echo "No shell scripts found, skipping"
+            exit 0
+          fi
+          for f in ${files}; do
+            echo "Checking ${f}"
+            bash -n "${f}"
+          done
