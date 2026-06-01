@@ -59,7 +59,12 @@ else
   dab bootstrap
   dab finalize --compressor zstd-max
 
-  BUILT=$(ls *.tar.* 2>/dev/null | head -1)
+  BUILT=""
+  for f in *.tar.*; do
+    [ -e "$f" ] || continue
+    BUILT="$f"
+    break
+  done
   [ -z "$BUILT" ] && err "Falha ao construir o template Debian 13."
 
   cp "$BUILT" "$TEMPLATE_PATH"

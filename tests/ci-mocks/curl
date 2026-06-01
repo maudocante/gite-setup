@@ -1,6 +1,6 @@
 #!/bin/bash
 
-echo "[mock] curl $@" >&2
+echo "[mock] curl" "$@" >&2
 outfile=""
 url=""
 while [[ $# -gt 0 ]]; do

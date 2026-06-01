@@ -1,6 +1,6 @@
 #!/bin/bash
 
-echo "[mock] wget $@" >&2
+echo "[mock] wget" "$@" >&2
 outfile=""
 url=""
 while [[ $# -gt 0 ]]; do

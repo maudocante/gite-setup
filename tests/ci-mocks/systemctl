@@ -1,4 +1,4 @@
 #!/bin/bash
 
-echo "[mock] systemctl $@" >&2
+echo "[mock] systemctl" "$@" >&2
 exit 0
