@@ -1,0 +1,8 @@
+#!/bin/bash
+
+echo "[mock] pct $@" >&2
+# Simple mock for 'pct' that records create actions
+if [ "$1" = "create" ]; then
+  echo "pct create called: $@" > /tmp/pct_create_called || true
+fi
+exit 0

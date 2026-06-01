@@ -1,0 +1,5 @@
+#!/bin/bash
+
+echo "[mock] apt-get $@" >&2
+# pretend success for all apt-get commands
+exit 0

@@ -1,0 +1,7 @@
+#!/bin/bash
+
+echo "[mock] dab $@" >&2
+if [ "$1" = "init" ]; then
+  mkdir -p /tmp/dab && echo "dab init" > /tmp/dab/init || true
+fi
+exit 0

@@ -1,0 +1,16 @@
+#!/bin/bash
+
+echo "[mock] curl $@" >&2
+outfile=""
+url=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -s|-fsSL) shift ;;
+    -o|-O) outfile="$2"; shift 2 ;;
+    *) url="$1"; shift ;;
+  esac
+done
+if [ -n "$outfile" ]; then
+  echo "# mock curl content for $url" > "$outfile" || true
+fi
+exit 0
