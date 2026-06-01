@@ -116,7 +116,7 @@ pct exec $LXC_ID -- bash -c "
 
 # ─── 6. CRIAR docker-compose.yml ─────────────────────────────────────────────
 # NOTA: usamos aspas duplas no heredoc para expandir as variáveis correctamente
-log "Criando docker-compose.yml (Gitea + 3 Runners + 1 Ubuntu runner)..."
+log "Criando docker-compose.yml (Gitea + 3 Runners)..."
 pct exec $LXC_ID -- bash -c "
   mkdir -p /root/gitea
   cat > /root/gitea/docker-compose.yml << COMPOSE
@@ -194,46 +194,12 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - act_runner_3_data:/data
 
-  act_runner_4:
-    build:
-      context: ./act_runner_ubuntu
-    image: local/act_runner:ubuntu-latest
-    container_name: act_runner_4
-    restart: unless-stopped
-    depends_on:
-      - giteadga
-    extra_hosts:
-      - giteadga:${LXC_IP}
-    environment:
-      - GITEA_INSTANCE_URL=http://${LXC_IP}:3000
-      - GITEA_RUNNER_REGISTRATION_TOKEN=COLOQUE_SEU_TOKEN_AQUI
-      - GITEA_RUNNER_NAME=dga-runner-4
-      - GITEA_RUNNER_LABELS=ubuntu,ci
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-      - act_runner_4_data:/data
-
 volumes:
   giteadga_data:
   act_runner_1_data:
   act_runner_2_data:
   act_runner_3_data:
-  act_runner_4_data:
 COMPOSE
-
-  mkdir -p /root/gitea/act_runner_ubuntu
-  cat > /root/gitea/act_runner_ubuntu/Dockerfile << 'DOCKERFILE'
-FROM gitea/act_runner:latest AS upstream
-
-FROM ubuntu:latest
-ENV DEBIAN_FRONTEND=noninteractive
-RUN apt-get update -qq && apt-get install -y -qq ca-certificates curl git jq && rm -rf /var/lib/apt/lists/*
-COPY --from=upstream /usr/local/bin /usr/local/bin
-COPY --from=upstream /app /app
-COPY --from=upstream /entrypoint.sh /entrypoint.sh
-RUN chmod +x /usr/local/bin/* /entrypoint.sh || true
-ENTRYPOINT ["/entrypoint.sh"]
-DOCKERFILE
 "
 
 # ─── 7. SUBIR APENAS O GITEA PRIMEIRO ────────────────────────────────────────
