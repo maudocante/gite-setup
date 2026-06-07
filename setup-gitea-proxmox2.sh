@@ -1,243 +1,211 @@
 #!/bin/bash
 # =============================================================================
-# setup-gitea-proxmox.sh
-# Cria LXC privilegiado no Proxmox com Docker + Gitea + 3 Act Runners
-# Usa Debian 13 (Trixie)
-# Execute no HOST do Proxmox como root
-# =============================================================================
+# setup-gitea-otimizado-proxmox.sh
+# Cria uma arquitetura dividida: 1 LXC para o Gitea + 1 LXC para os Runners
+# Usa Debian 13 (Trixie) - Execute no HOST do Proxmox como root
+# ============================================================================
 
 set -e
 
-# ─── CONFIGURAÇÕES ────────────────────────────────────────────────────────────
-LXC_IP_CIDR="10.11.10.71/24"
-LXC_IP="10.11.10.71"
-LXC_GW="10.11.10.254"
-LXC_ID=202
-LXC_HOSTNAME="gitea-lxc"
-LXC_PASSWORD="Senha1122"
-LXC_MEMORY=2048
-LXC_CORES=2
-LXC_DISK="local-lvm:120"
+# ─── CONFIGURAÇÕES DE REDE E ID ──────────────────────────────────────────────
 LXC_BRIDGE="vmbr1"
-GITEA_PORT=3000
-GITEA_SSH_PORT=222
+LXC_GW="10.11.10.254"
 TEMPLATE_PATH="/var/lib/vz/template/cache/debian-13-standard_13.1-2_amd64.tar.zst"
-# ─────────────────────────────────────────────────────────────────────────────
+LXC_PASSWORD="Senha1122"
 
+# LXC 1: Servidor Gitea (Seguro e Isolado)
+GITEA_ID=204
+GITEA_IP_CIDR="10.11.10.73/24"
+GITEA_IP="10.11.10.73"
+GITEA_PORT=3000
+GITEA_HOSTNAME="giteadga-server"
+GITEA_CONTAINER_NAME="giteadgasrv"
+GITEA_VOLUME_NAME="giteadga_datasrv"
+
+# LXC 2: Central de Runners (Robusto para compilações)
+RUNNERS_ID=203
+RUNNERS_IP_CIDR="10.11.10.74/24"
+RUNNERS_IP="10.11.10.74"
+RUNNERS_HOSTNAME="giteadga-runners"
+ACT_RUNNER_1_CONTAINER_NAME="act_runner_1"
+ACT_RUNNER_1_VOLUME="act_runner_1_data"
+ACT_RUNNER_2_CONTAINER_NAME="act_runner_2"
+ACT_RUNNER_2_VOLUME="act_runner_2_data"
+ACT_RUNNER_3_CONTAINER_NAME="act_runner_3"
+ACT_RUNNER_3_VOLUME="act_runner_3_data"
+lq ta /
 GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
 RED='\033[0;31m'
 NC='\033[0m'
 
 log()  { echo -e "${GREEN}[+]${NC} $1"; }
-warn() { echo -e "${YELLOW}[!]${NC} $1"; }
 err()  { echo -e "${RED}[✗]${NC} $1"; exit 1; }
 
-# ─── 1. TEMPLATE DEBIAN 13 ───────────────────────────────────────────────────
-if [ -f "$TEMPLATE_PATH" ]; then
-  log "Template Debian 13 já existe em $TEMPLATE_PATH"
-else
-  log "Template Debian 13 não encontrado. Construindo via dab..."
-
+# ─── 1. VALIDAÇÃO DO TEMPLATE DEBIAN 13 ──────────────────────────────────────
+if [ ! -f "$TEMPLATE_PATH" ]; then
+  log "Construindo template Debian 13 via dab..."
   if ! command -v dab &>/dev/null; then
-    log "Instalando dab..."
-    apt-get update -qq
-    apt-get install -y -qq dab
+    apt-get update -qq && apt-get install -y -qq dab
   fi
-
-  mkdir -p /tmp/dab-debian13
-  cd /tmp/dab-debian13
-
-  log "Baixando configuração dab..."
-  wget -q -O dab.conf \
-    "https://git.proxmox.com/?p=dab-pve-appliances.git;a=blob_plain;f=debian-13-trixie-std-64/dab.conf;hb=HEAD"
-  wget -q -O Makefile \
-    "https://git.proxmox.com/?p=dab-pve-appliances.git;a=blob_plain;f=debian-13-trixie-std-64/Makefile;hb=HEAD"
-
-  log "Construindo template Debian 13 (pode demorar alguns minutos)..."
-  dab init
-  dab bootstrap
-  dab finalize --compressor zstd-max
-
-  BUILT=""
-  for f in *.tar.*; do
-    [ -e "$f" ] || continue
-    BUILT="$f"
-    break
-  done
-  [ -z "$BUILT" ] && err "Falha ao construir o template Debian 13."
-
-  cp "$BUILT" "$TEMPLATE_PATH"
-  log "Template copiado para $TEMPLATE_PATH"
+  mkdir -p /tmp/dab-debian13 && cd /tmp/dab-debian13
+  wget -q -O dab.conf "https://git.proxmox.com/?p=dab-pve-appliances.git;a=blob_plain;f=debian-13-trixie-std-64/dab.conf;hb=HEAD"
+  wget -q -O Makefile "https://git.proxmox.com/?p=dab-pve-appliances.git;a=blob_plain;f=debian-13-trixie-std-64/Makefile;hb=HEAD"
+  dab init && dab bootstrap && dab finalize --compressor zstd-max
+  cp *.tar.zst "$TEMPLATE_PATH"
   cd /
 fi
 
-# ─── 2. CRIAR O LXC PRIVILEGIADO ─────────────────────────────────────────────
-log "Criando LXC ID $LXC_ID ($LXC_HOSTNAME)..."
-pct create $LXC_ID $TEMPLATE_PATH \
-  --hostname $LXC_HOSTNAME \
-  --memory $LXC_MEMORY \
-  --cores $LXC_CORES \
-  --rootfs $LXC_DISK \
-  --net0 name=eth0,bridge=$LXC_BRIDGE,ip=$LXC_IP_CIDR,gw=$LXC_GW \
+# ─── 2. CRIAR LXC 1: SERVIDOR GITEA (PRIVILEGIADO COM NESTING) ─────────────────
+log "Criando LXC ID $GITEA_ID - Servidor Gitea (Seguro)..."
+pct create $GITEA_ID $TEMPLATE_PATH \
+  --hostname $GITEA_HOSTNAME \
+  --memory 1536 \
+  --cores 1 \
+  --rootfs local-lvm:40 \
+  --net0 name=eth0,bridge=$LXC_BRIDGE,ip=$GITEA_IP_CIDR,gw=$LXC_GW \
   --unprivileged 0 \
   --password $LXC_PASSWORD \
   --features keyctl=1,nesting=1
 
-# ─── 3. SUPORTE DOCKER NO LXC ────────────────────────────────────────────────
-log "Aplicando configurações Docker no LXC..."
-cat >> /etc/pve/lxc/${LXC_ID}.conf << LXCCONF
+# Ajustes finos de segurança para permitir Docker/overlayfs no container Gitea
+cat >> /etc/pve/lxc/${GITEA_ID}.conf << LXCCONF
 lxc.apparmor.profile: unconfined
 lxc.cgroup2.devices.allow: a
 lxc.cap.drop:
 LXCCONF
 
-# ─── 4. INICIAR O LXC ────────────────────────────────────────────────────────
-log "Iniciando LXC..."
-pct start $LXC_ID
-sleep 6
+pct start $GITEA_ID
+sleep 5
 
-# ─── 5. INSTALAR DOCKER ──────────────────────────────────────────────────────
-log "Instalando Docker no LXC Debian 13..."
-pct exec $LXC_ID -- bash -c "
-  apt-get update -qq
-  apt-get install -y -qq ca-certificates curl gnupg
-
+log "Instalando Docker no Servidor Gitea..."
+pct exec $GITEA_ID -- bash -c "
+  apt-get update -qq && apt-get install -y -qq ca-certificates curl gnupg
   install -m 0755 -d /etc/apt/keyrings
-  curl -fsSL https://download.docker.com/linux/debian/gpg | \
-    gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-  chmod a+r /etc/apt/keyrings/docker.gpg
-
-  echo \"deb [arch=\$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
-    https://download.docker.com/linux/debian trixie stable\" | \
-    tee /etc/apt/sources.list.d/docker.list > /dev/null
-
-  apt-get update -qq
-  apt-get install -y -qq docker-ce docker-ce-cli containerd.io docker-compose-plugin
-
-  systemctl enable --now docker
-  docker --version
+  curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+  echo \"deb [arch=\$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian trixie stable\" | tee /etc/apt/sources.list.d/docker.list > /dev/null
+  apt-get update -qq && apt-get install -y -qq docker-ce docker-ce-cli containerd.io docker-compose-plugin
 "
 
-# ─── 6. CRIAR docker-compose.yml ─────────────────────────────────────────────
-# NOTA: usamos aspas duplas no heredoc para expandir as variáveis correctamente
-log "Criando docker-compose.yml (Gitea + 3 Runners)..."
-pct exec $LXC_ID -- bash -c "
+log "Configurando docker-compose do Gitea Server..."
+pct exec $GITEA_ID -- bash -c "
   mkdir -p /root/gitea
-  cat > /root/gitea/docker-compose.yml << COMPOSE
+  cat > /root/gitea/docker-compose.yml << EOF
 services:
-
   giteadga:
     image: gitea/gitea:latest
-    container_name: giteadga
+    container_name: ${GITEA_CONTAINER_NAME}
     restart: unless-stopped
     ports:
-      - \"${GITEA_PORT}:3000\"
-      - \"${GITEA_SSH_PORT}:22\"
+      - \"3000:3000\"
+      - \"222:22\"
     environment:
       - USER_UID=1000
       - USER_GID=1000
-      - GITEA__server__ROOT_URL=http://${LXC_IP}:${GITEA_PORT}
-      - GITEA__server__MAX_REQUEST_BODY_SIZE=-1
+      - GITEA__server__ROOT_URL=http://${GITEA_IP}:${GITEA_PORT}
       - GITEA__database__DB_TYPE=sqlite3
       - GITEA__database__PATH=/data/gitea/gitea.db
-      - GITEA__repository__upload__FILE_MAX_SIZE=1024
-      - GITEA__repository__upload__MAX_FILES=20
-      - GITEA__server__LFS_START_SERVER=true
-      - GITEA__lfs__PATH=/data/gitea/lfs
     volumes:
-      - giteadga_data:/data
+      - ${GITEA_VOLUME_NAME}:/data
+volumes:
+  ${GITEA_VOLUME_NAME}:
+EOF
+  cd /root/gitea && docker compose up -d
+"
 
+# ─── 3. CRIAR LXC 2: CENTRAL DE RUNNERS (PRIVILEGIADO COM NESTING) ───────────
+log "Criando LXC ID $RUNNERS_ID - Central de Executores (Runners)..."
+pct create $RUNNERS_ID $TEMPLATE_PATH \
+  --hostname $RUNNERS_HOSTNAME \
+  --memory 2048 \
+  --cores 2 \
+  --rootfs local-lvm:80 \
+  --net0 name=eth0,bridge=$LXC_BRIDGE,ip=$RUNNERS_IP_CIDR,gw=$LXC_GW \
+  --unprivileged 0 \
+  --password $LXC_PASSWORD \
+  --features keyctl=1,nesting=1
+
+# Ajustes finos de segurança apenas no container de execução de código
+cat >> /etc/pve/lxc/${RUNNERS_ID}.conf << LXCCONF
+lxc.apparmor.profile: unconfined
+lxc.cgroup2.devices.allow: a
+lxc.cap.drop:
+LXCCONF
+
+pct start $RUNNERS_ID
+sleep 5
+
+log "Instalando Docker na Central de Runners..."
+pct exec $RUNNERS_ID -- bash -c "
+  apt-get update -qq && apt-get install -y -qq ca-certificates curl gnupg
+  install -m 0755 -d /etc/apt/keyrings
+  curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+  echo \"deb [arch=\$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian trixie stable\" | tee /etc/apt/sources.list.d/docker.list > /dev/null
+  apt-get update -qq && apt-get install -y -qq docker-ce docker-ce-cli containerd.io docker-compose-plugin
+"
+
+log "Configurando a estrutura dos 3 Act Runners..."
+pct exec $RUNNERS_ID -- bash -c "
+  mkdir -p /root/runners
+  cat > /root/runners/docker-compose.yml << EOF
+services:
   act_runner_1:
     image: gitea/act_runner:latest
-    container_name: act_runner_1
+    container_name: ${ACT_RUNNER_1_CONTAINER_NAME}
     restart: unless-stopped
-    depends_on:
-      - giteadga
-    extra_hosts:
-      - giteadga:${LXC_IP}
     environment:
-      - GITEA_INSTANCE_URL=http://${LXC_IP}:3000
+      - GITEA_INSTANCE_URL=http://${GITEA_IP}:3000
       - GITEA_RUNNER_REGISTRATION_TOKEN=COLOQUE_SEU_TOKEN_AQUI
-      - GITEA_RUNNER_NAME=dga-runner-1
+      - GITEA_RUNNER_NAME=${ACT_RUNNER_1_CONTAINER_NAME}
       - GITEA_RUNNER_LABELS=deploy,producao
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - act_runner_1_data:/data
+      - ${ACT_RUNNER_1_VOLUME}:/data
 
   act_runner_2:
     image: gitea/act_runner:latest
-    container_name: act_runner_2
+    container_name: ${ACT_RUNNER_2_CONTAINER_NAME}
     restart: unless-stopped
-    depends_on:
-      - giteadga
-    extra_hosts:
-      - giteadga:${LXC_IP}
     environment:
-      - GITEA_INSTANCE_URL=http://${LXC_IP}:3000
+      - GITEA_INSTANCE_URL=http://${GITEA_IP}:3000
       - GITEA_RUNNER_REGISTRATION_TOKEN=COLOQUE_SEU_TOKEN_AQUI
-      - GITEA_RUNNER_NAME=dga-runner-2
+      - GITEA_RUNNER_NAME=${ACT_RUNNER_2_CONTAINER_NAME}
       - GITEA_RUNNER_LABELS=testes,staging
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - act_runner_2_data:/data
+      - ${ACT_RUNNER_2_VOLUME}:/data
 
   act_runner_3:
     image: gitea/act_runner:latest
-    container_name: act_runner_3
+    container_name: ${ACT_RUNNER_3_CONTAINER_NAME}
     restart: unless-stopped
-    depends_on:
-      - giteadga
-    extra_hosts:
-      - giteadga:${LXC_IP}
     environment:
-      - GITEA_INSTANCE_URL=http://${LXC_IP}:3000
+      - GITEA_INSTANCE_URL=http://${GITEA_IP}:3000
       - GITEA_RUNNER_REGISTRATION_TOKEN=COLOQUE_SEU_TOKEN_AQUI
-      - GITEA_RUNNER_NAME=dga-runner-3
+      - GITEA_RUNNER_NAME=${ACT_RUNNER_3_CONTAINER_NAME}
       - GITEA_RUNNER_LABELS=build,compilacao
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - act_runner_3_data:/data
+      - ${ACT_RUNNER_3_VOLUME}:/data
 
 volumes:
-  giteadga_data:
-  act_runner_1_data:
-  act_runner_2_data:
-  act_runner_3_data:
-COMPOSentryDOCKERFILE
+  ${ACT_RUNNER_1_VOLUME}:
+  ${ACT_RUNNER_2_VOLUME}:
+  ${ACT_RUNNER_3_VOLUME}:
+EOF
 "
 
-# ─── 7. SUBIR APENAS O GITEA PRIMEIRO ────────────────────────────────────────
-log "Subindo Gitea..."
-pct exec $LXC_ID -- bash -c "cd /root/gitea && docker compose up -d giteadga"
-
-# ─── 8. INSTRUÇÕES FINAIS ────────────────────────────────────────────────────
 echo ""
 echo "============================================================"
-echo -e "${GREEN}  AMBIENTE CRIADO COM SUCESSO! (Debian 13 Trixie)${NC}"
+echo -e "${GREEN}  INFRAESTRUTURA DISTRIBUÍDA PRONTA COM SUCESSO!${NC}"
 echo "============================================================"
-echo ""
-echo "  LXC ID   : $LXC_ID"
-echo "  IP       : $LXC_IP"
-echo ""
-echo "  Gitea    : http://$LXC_IP:$GITEA_PORT"
-echo ""
+echo "  Gitea Server IP : $GITEA_IP (ID: $GITEA_ID)"
+echo "  Gitea Runners IP: $RUNNERS_IP (ID: $RUNNERS_ID)"
+echo "============================================================"
 echo "  PRÓXIMOS PASSOS:"
-echo ""
-echo "  1. Acesse http://$LXC_IP:$GITEA_PORT e complete a instalação"
-echo ""
-echo "  2. Vá em: Site Administration → Runners → Create new runner"
-echo "     e copie o TOKEN gerado"
-echo ""
-echo "  3. Substitua o token nos 3 runners:"
-echo "     pct exec $LXC_ID -- nano /root/gitea/docker-compose.yml"
-echo "     (substitua COLOQUE_SEU_TOKEN_AQUI pelo token copiado)"
-echo ""
-echo "  4. Suba os 3 runners:"
-echo "     pct exec $LXC_ID -- bash -c 'cd /root/gitea && docker compose up -d'"
-echo ""
-echo "  5. Verifique os logs:"
-echo "     pct exec $LXC_ID -- docker logs act_runner_1 -f"
-echo "     pct exec $LXC_ID -- docker logs act_runner_2 -f"
-echo "     pct exec $LXC_ID -- docker logs act_runner_3 -f"
+echo "  1. Vá em seu navegador: http://$GITEA_IP:3000"
+echo "  2. Pegue o Token de administrador em Site Administration -> Runners"
+echo "  3. Acesse o LXC dos Runners para atualizar o token:"
+echo "     pct exec $RUNNERS_ID -- nano /root/runners/docker-compose.yml"
+echo "  4. Inicie os executores de testes:"
+echo "     pct exec $RUNNERS_ID -- bash -c 'cd /root/runners && docker compose up -d'"
 echo "============================================================"
