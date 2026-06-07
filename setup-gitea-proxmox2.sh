@@ -8,7 +8,7 @@
 set -e
 
 # ─── CONFIGURAÇÕES DE REDE E ID ──────────────────────────────────────────────
-LXC_BRIDGE="vmbr1"
+'LXC_BRIDGE="vmbr1"'
 LXC_GW="10.11.10.254"
 TEMPLATE_PATH="/var/lib/vz/template/cache/debian-13-standard_13.1-2_amd64.tar.zst"
 LXC_PASSWORD="Senha1122"
