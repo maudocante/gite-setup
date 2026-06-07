@@ -14,7 +14,7 @@ TEMPLATE_PATH="/var/lib/vz/template/cache/debian-13-standard_13.1-2_amd64.tar.zs
 LXC_PASSWORD="Senha1122"
 
 # LXC 1: Servidor Gitea (Seguro e Isolado)
-GITEA_ID=204"
+GITEA_ID=204
 GITEA_IP_CIDR="10.11.10.73/24"
 GITEA_IP="10.11.10.73"
 GITEA_PORT=3000
